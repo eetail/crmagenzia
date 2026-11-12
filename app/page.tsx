@@ -1,13 +1,17 @@
-'use client';
-
-import React, { useState, useEffect } from 'react';
-import { 
-  Shield, AlertTriangle, Users, Clock, MapPin, Plus, 
-  Building2, Phone, Mail, LogOut, Lock, RefreshCw, X,
-  Briefcase
+port { 
+  Shield, AlertTriangle, Users, FileText, CheckCircle2, 
+  XCircle, Clock, MapPin, Plus, Trash2, ArrowRight, 
+  TrendingUp, Building2, Phone, Mail, LogOut, Lock, KeyRound, RefreshCw,
+  Calendar, Award, DollarSign
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
+// --- INIZIALIZZAZIONE CLIENT SUPABASE ---
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// --- INTERFACCE TYPESCRIPT ---
 interface Indirizzo {
   id: number;
   soggetto_id?: number;
@@ -26,6 +30,13 @@ interface Offerta {
   motivazione_perdita?: string;
 }
 
+interface Legame {
+  id?: number;
+  nome_legame: string;
+  tipo_legame: string;
+  target_tipo: string;
+}
+
 interface Soggetto {
   id: number;
   nome: string;
@@ -35,10 +46,12 @@ interface Soggetto {
   telefono: string;
   email: string;
   indirizzi?: Indirizzo[];
+  legami?: Legame[];
   offerte?: Offerta[];
 }
 
 export default function InsureCRMApp() {
+  // --- STATO AUTENTICAZIONE ---
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState('');
@@ -46,6 +59,8 @@ export default function InsureCRMApp() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // --- STATO APPLICAZIONE ---
+  const [vistaAttiva, setVistaAttiva] = useState<'alert' | 'anagrafica' | 'offerte'>('anagrafica');
   const [soggetti, setSoggetti] = useState<Soggetto[]>([]);
   const [soggettoSelezionatoId, setSoggettoSelezionatoId] = useState<number | null>(null);
   const [caricamentoDati, setCaricamentoDati] = useState(false);
@@ -62,13 +77,13 @@ export default function InsureCRMApp() {
 
   // Modale Nuova Offerta
   const [mostraModaleOfferta, setMostraModaleOfferta] = useState(false);
-  const [offertaRamo, setOffertaRamo] = useState('RC Auto');
-  const [offertaCompagnia, setOffertaCompagnia] = useState('');
-  const [offertaPremio, setOffertaPremio] = useState('');
-  const [offertaStato, setOffertaStato] = useState<'IN_TRATTATIVA' | 'VINTA' | 'PERSA'>('IN_TRATTATIVA');
-  const [offertaMotivo, setOffertaMotivo] = useState('');
+  const [nuovoRamo, setNuovoRamo] = useState('RC Auto');
+  const [nuovaCompagnia, setNuovaCompagnia] = useState('');
+  const [nuovoPremio, setNuovoPremio] = useState<number>(0);
+  const [nuovoStatoOfferta, setNuovoStatoOfferta] = useState<'IN_TRATTATIVA' | 'VINTA' | 'PERSA'>('IN_TRATTATIVA');
+  const [nuovaMotivazione, setNuovaMotivazione] = useState('');
 
-  // 1. Sessione Supabase
+  // 1. Ascolto Sessione Supabase
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -83,29 +98,30 @@ export default function InsureCRMApp() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 2. Caricamento dati da Supabase
+  // 2. Caricamento Dati Reali da Supabase
   const caricaSoggetti = async () => {
     setCaricamentoDati(true);
     try {
-      const { data, error } = await supabase
+      const { data: datiSoggetti, error: errSoggetti } = await supabase
         .from('soggetti')
         .select(`
           *,
           indirizzi (*),
-          offerte (*)
+          offerte (*),
+          legami:legami!soggetto_a_id (*)
         `)
         .order('id', { ascending: false });
 
-      if (error) {
-        console.error('Errore durante il caricamento:', error);
-      } else if (data) {
-        setSoggetti(data);
-        if (data.length > 0 && !soggettoSelezionatoId) {
-          setSoggettoSelezionatoId(data[0].id);
+      if (errSoggetti) {
+        console.error('Errore caricamento:', errSoggetti);
+      } else if (datiSoggetti) {
+        setSoggetti(datiSoggetti);
+        if (datiSoggetti.length > 0 && !soggettoSelezionatoId) {
+          setSoggettoSelezionatoId(datiSoggetti[0].id);
         }
       }
     } catch (err) {
-      console.error('Eccezione Supabase:', err);
+      console.error('Errore imprevisto:', err);
     } finally {
       setCaricamentoDati(false);
     }
@@ -117,7 +133,7 @@ export default function InsureCRMApp() {
     }
   }, [session]);
 
-  // 3. Login
+  // 3. Login & Logout
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
@@ -141,7 +157,7 @@ export default function InsureCRMApp() {
     setSession(null);
   };
 
-  // 4. Salvataggio Nuovo Soggetto su DB (Persistente)
+  // 4. Salvataggio Nuovo Soggetto su DB Supabase
   const salvaNuovoSoggetto = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nuovoNome.trim()) return;
@@ -162,11 +178,11 @@ export default function InsureCRMApp() {
       .select();
 
     if (error) {
-      alert('Errore salvataggio: ' + error.message);
+      alert('Errore salvataggio Supabase: ' + error.message);
     } else if (data && data.length > 0) {
       const creato = data[0];
       await supabase.from('indirizzi').insert([
-        { soggetto_id: creato.id, label: 'Residenza', via: 'Inserisci indirizzo' }
+        { soggetto_id: creato.id, label: 'Residenza', via: 'Via / Piazza da specificare' }
       ]);
 
       await caricaSoggetti();
@@ -182,56 +198,64 @@ export default function InsureCRMApp() {
     setSalvataggioInCorso(false);
   };
 
-  // 5. Gestione Indirizzi su DB
+  // 5. Gestione Indirizzi
   const aggiungiNuovaSede = async (soggettoId: number) => {
     const { error } = await supabase.from('indirizzi').insert([
-      { soggetto_id: soggettoId, label: 'Sede / Immobile', via: 'Inserisci via e città' }
+      { soggetto_id: soggettoId, label: 'Nuova Sede / Immobile', via: 'Inserisci indirizzo completo' }
     ]);
     if (!error) caricaSoggetti();
   };
 
   const salvaLabelIndirizzo = async (indirizzoId: number, nuovoLabel: string) => {
     await supabase.from('indirizzi').update({ label: nuovoLabel }).eq('id', indirizzoId);
-    caricaSoggetti();
+    setSoggetti(prev => prev.map(s => ({
+      ...s,
+      indirizzi: s.indirizzi?.map(i => i.id === indirizzoId ? { ...i, label: nuovoLabel } : i)
+    })));
   };
 
-  // 6. Salvataggio Nuova Offerta su DB
+  // 6. Salvataggio Nuova Offerta
   const salvaNuovaOfferta = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!soggettoSelezionatoId || !offertaCompagnia.trim()) return;
+    if (!soggettoSelezionatoId) return;
 
     const { error } = await supabase.from('offerte').insert([
       {
         soggetto_id: soggettoSelezionatoId,
-        ramo: offertaRamo,
-        compagnia: offertaCompagnia.trim(),
-        premio: parseFloat(offertaPremio) || 0,
-        stato: offertaStato,
-        motivazione_perdita: offertaStato === 'PERSA' ? offertaMotivo.trim() : null
+        ramo: nuovoRamo,
+        compagnia: nuovaCompagnia.trim(),
+        premio: nuovoPremio,
+        data_offerta: new Date().toISOString().split('T')[0],
+        stato: nuovoStatoOfferta,
+        motivazione_perdita: nuovoStatoOfferta === 'PERSA' ? nuovaMotivazione.trim() : null
       }
     ]);
 
     if (!error) {
-      await caricaSoggetti();
       setMostraModaleOfferta(false);
-      setOffertaCompagnia('');
-      setOffertaPremio('');
-      setOffertaMotivo('');
+      setNuovaCompagnia('');
+      setNuovoPremio(0);
+      setNuovaMotivazione('');
+      caricaSoggetti();
+    } else {
+      alert('Errore salvataggio offerta: ' + error.message);
     }
   };
 
+  // --- SCHERMATA ATTESA ---
   if (authLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-900 text-white">
         <Clock className="w-6 h-6 animate-spin text-blue-500 mr-2" />
-        <span className="text-sm">Verifica sessione in corso...</span>
+        <span className="text-sm">Verifica autorizzazioni Supabase...</span>
       </div>
     );
   }
 
+  // --- SCHERMATA LOGIN BLINDATA ---
   if (!session) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-900 p-4">
+      <div className="flex min-h-screen items-center justify-center bg-slate-900 p-4 font-sans">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 border border-slate-200">
           <div className="flex justify-center mb-6">
             <div className="flex items-center justify-center w-16 h-16 bg-blue-600 text-white rounded-2xl shadow-md">
@@ -239,7 +263,7 @@ export default function InsureCRMApp() {
             </div>
           </div>
           <h2 className="text-2xl font-bold text-center text-slate-900">InsureCRM</h2>
-          <p className="text-sm text-center text-slate-500 mb-6">Accesso Riservato Agenti</p>
+          <p className="text-sm text-center text-slate-500 mb-6">Accesso Riservato Portafoglio Agenti</p>
 
           {loginError && (
             <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center">
@@ -255,8 +279,8 @@ export default function InsureCRMApp() {
                 required
                 value={loginEmail}
                 onChange={e => setLoginEmail(e.target.value)}
-                placeholder="agente@agenzia.it"
-                className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="agente@assicurazioni.it"
+                className="w-full px-3.5 py-2.5 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
               />
             </div>
             <div>
@@ -267,7 +291,7 @@ export default function InsureCRMApp() {
                 value={loginPassword}
                 onChange={e => setLoginPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full px-3 py-2.5 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3.5 py-2.5 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
               />
             </div>
             <button
@@ -276,7 +300,7 @@ export default function InsureCRMApp() {
               className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition shadow flex items-center justify-center"
             >
               {isSubmitting ? <Clock className="w-4 h-4 mr-2 animate-spin" /> : <Lock className="w-4 h-4 mr-2" />}
-              Accedi
+              Accedi al Gestionale
             </button>
           </form>
         </div>
@@ -288,6 +312,7 @@ export default function InsureCRMApp() {
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-800 font-sans">
+      {/* SIDEBAR */}
       <aside className="w-64 bg-slate-900 text-white p-5 flex flex-col justify-between">
         <div>
           <div className="flex items-center space-x-3 mb-8">
@@ -296,14 +321,35 @@ export default function InsureCRMApp() {
             </div>
             <div>
               <h1 className="font-bold text-base leading-none">InsureCRM</h1>
-              <span className="text-[11px] text-emerald-400 font-medium">● Connesso a Supabase</span>
+              <span className="text-[11px] text-emerald-400 font-medium">● Connesso al DB</span>
             </div>
           </div>
 
           <nav className="space-y-2">
-            <button className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm bg-blue-600 text-white font-medium">
+            <button
+              onClick={() => setVistaAttiva('alert')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm transition ${
+                vistaAttiva === 'alert' ? 'bg-blue-600 text-white font-medium' : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <span className="flex items-center"><AlertTriangle className="w-4 h-4 mr-2.5" /> Scadenze & Alert</span>
+            </button>
+            <button
+              onClick={() => setVistaAttiva('anagrafica')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm transition ${
+                vistaAttiva === 'anagrafica' ? 'bg-blue-600 text-white font-medium' : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
               <span className="flex items-center"><Users className="w-4 h-4 mr-2.5" /> Anagrafica 360°</span>
               <span className="bg-blue-800 text-white text-xs px-2 py-0.5 rounded-full">{soggetti.length}</span>
+            </button>
+            <button
+              onClick={() => setVistaAttiva('offerte')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm transition ${
+                vistaAttiva === 'offerte' ? 'bg-blue-600 text-white font-medium' : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <span className="flex items-center"><FileText className="w-4 h-4 mr-2.5" /> Offerte & Preventivi</span>
             </button>
           </nav>
         </div>
@@ -319,11 +365,16 @@ export default function InsureCRMApp() {
         </div>
       </aside>
 
+      {/* CONTENUTO PRINCIPALE */}
       <main className="flex-1 p-8 overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Anagrafica Portafoglio & Trattative</h2>
-            <p className="text-sm text-slate-500">I dati inseriti vengono salvati direttamente su Supabase</p>
+            <h2 className="text-2xl font-bold text-slate-900">
+              {vistaAttiva === 'anagrafica' && 'Anagrafica 360° Clienti & Prospect'}
+              {vistaAttiva === 'alert' && 'Cabina di Regia Scadenze & Alert'}
+              {vistaAttiva === 'offerte' && 'Riepilogo Globale Offerte & Trattative'}
+            </h2>
+            <p className="text-sm text-slate-500">I dati salvati sono archiviati in modo permanente su Supabase</p>
           </div>
 
           <div className="flex items-center space-x-3">
@@ -331,7 +382,7 @@ export default function InsureCRMApp() {
               onClick={caricaSoggetti}
               disabled={caricamentoDati}
               className="p-2.5 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600 transition"
-              title="Sincronizza dal Database"
+              title="Ricarica dal Database"
             >
               <RefreshCw className={`w-4 h-4 ${caricamentoDati ? 'animate-spin' : ''}`} />
             </button>
@@ -345,98 +396,98 @@ export default function InsureCRMApp() {
           </div>
         </div>
 
-        {soggetti.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-2xl border border-slate-200">
-            <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <h3 className="text-base font-semibold text-slate-700">Nessun soggetto nel database</h3>
-            <p className="text-sm text-slate-500 mb-4">Crea il primo contatto per testare la sincronizzazione permanente.</p>
-            <button
-              onClick={() => setMostraModaleNuovo(true)}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl"
-            >
-              Crea Primo Soggetto
-            </button>
-          </div>
-        ) : (
+        {/* VISTA ANAGRAFICA */}
+        {vistaAttiva === 'anagrafica' && (
           <div>
-            <div className="flex space-x-2 mb-6 overflow-x-auto pb-2">
-              {soggetti.map(s => (
+            {soggetti.length === 0 ? (
+              <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-sm">
+                <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <h3 className="text-base font-semibold text-slate-700">Nessuna anagrafica nel database</h3>
+                <p className="text-sm text-slate-500 mb-4">Inizia registrando il tuo primo cliente o potenziale lead.</p>
                 <button
-                  key={s.id}
-                  onClick={() => setSoggettoSelezionatoId(s.id)}
-                  className={`px-3.5 py-2 text-xs rounded-xl font-medium border whitespace-nowrap transition ${
-                    s.id === soggettoAttivo?.id 
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                  }`}
+                  onClick={() => setMostraModaleNuovo(true)}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl"
                 >
-                  {s.nome} ({s.stato === 'CLIENTE_ATTIVO' ? 'Cliente' : 'Prospect'})
+                  Aggiungi Primo Soggetto
                 </button>
-              ))}
-            </div>
-
-            {soggettoAttivo && (
-              <div className="grid grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm col-span-1">
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-900">{soggettoAttivo.nome}</h3>
-                      <p className="text-xs text-slate-500 font-mono">{soggettoAttivo.codice_fiscale || 'CF non inserito'}</p>
-                    </div>
-                    <span className={`text-[10px] px-2.5 py-1 rounded-full font-bold ${
-                      soggettoAttivo.stato === 'CLIENTE_ATTIVO' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {soggettoAttivo.stato}
-                    </span>
-                  </div>
-
-                  <div className="space-y-3 text-sm text-slate-600 pt-3 border-t">
-                    <div className="flex items-center"><Building2 className="w-4 h-4 mr-2 text-slate-400" /> {soggettoAttivo.professione || 'Professione non specificata'}</div>
-                    <div className="flex items-center"><Phone className="w-4 h-4 mr-2 text-slate-400" /> {soggettoAttivo.telefono || 'Nessun telefono'}</div>
-                    <div className="flex items-center"><Mail className="w-4 h-4 mr-2 text-slate-400" /> {soggettoAttivo.email || 'Nessuna email'}</div>
-                  </div>
+              </div>
+            ) : (
+              <div>
+                {/* Selettore Soggetti a Schede */}
+                <div className="flex space-x-2 mb-6 overflow-x-auto pb-2">
+                  {soggetti.map(s => (
+                    <button
+                      key={s.id}
+                      onClick={() => setSoggettoSelezionatoId(s.id)}
+                      className={`px-3.5 py-2 text-xs rounded-xl font-medium border whitespace-nowrap transition ${
+                        s.id === soggettoAttivo?.id 
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {s.nome} ({s.stato === 'CLIENTE_ATTIVO' ? 'Cliente' : 'Prospect'})
+                    </button>
+                  ))}
                 </div>
 
-                <div className="col-span-2 space-y-6">
-                  {/* Indirizzi & Sedi */}
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-slate-900 flex items-center">
-                        <MapPin className="w-4 h-4 mr-2 text-blue-600" /> Indirizzi & Sedi
-                      </h3>
-                      <button
-                        onClick={() => aggiungiNuovaSede(soggettoAttivo.id)}
-                        className="text-xs text-blue-600 font-semibold hover:underline flex items-center"
-                      >
-                        <Plus className="w-3.5 h-3.5 mr-1" /> Aggiungi Sede
-                      </button>
+                {soggettoAttivo && (
+                  <div className="grid grid-cols-3 gap-6">
+                    {/* Scheda Anagrafica */}
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm col-span-1">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h3 className="text-lg font-bold text-slate-900">{soggettoAttivo.nome}</h3>
+                          <p className="text-xs text-slate-500 font-mono">{soggettoAttivo.codice_fiscale || 'CF non presente'}</p>
+                        </div>
+                        <span className={`text-[10px] px-2.5 py-1 rounded-full font-bold ${
+                          soggettoAttivo.stato === 'CLIENTE_ATTIVO' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {soggettoAttivo.stato}
+                        </span>
+                      </div>
+
+                      <div className="space-y-3 text-sm text-slate-600 pt-3 border-t">
+                        <div className="flex items-center"><Building2 className="w-4 h-4 mr-2 text-slate-400" /> {soggettoAttivo.professione || 'Professione non inserita'}</div>
+                        <div className="flex items-center"><Phone className="w-4 h-4 mr-2 text-slate-400" /> {soggettoAttivo.telefono || 'Nessun recapito telefonico'}</div>
+                        <div className="flex items-center"><Mail className="w-4 h-4 mr-2 text-slate-400" /> {soggettoAttivo.email || 'Nessun indirizzo email'}</div>
+                      </div>
                     </div>
 
-                    <div className="space-y-2">
-                      {soggettoAttivo.indirizzi && soggettoAttivo.indirizzi.length > 0 ? (
-                        soggettoAttivo.indirizzi.map(ind => (
-                          <div key={ind.id} className="p-3 bg-slate-50 border rounded-xl flex items-center justify-between">
-                            <input
-                              type="text"
-                              defaultValue={ind.label}
-                              onBlur={(e) => salvaLabelIndirizzo(ind.id, e.target.value)}
-                              className="text-xs font-bold text-blue-900 bg-transparent border-b border-dashed border-slate-400 focus:outline-none w-1/3"
-                            />
-                            <span className="text-sm text-slate-700 flex-1 ml-4">{ind.via}</span>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-xs text-slate-400 italic">Nessun indirizzo registrato.</div>
-                      )}
-                    </div>
-                  </div>
+                    {/* Sedi & Indirizzi */}
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm col-span-2">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-bold text-slate-900 flex items-center">
+                          <MapPin className="w-4 h-4 mr-2 text-blue-600" /> Indirizzi & Sedi
+                        </h3>
+                        <button
+                          onClick={() => aggiungiNuovaSede(soggettoAttivo.id)}
+                          className="text-xs text-blue-600 font-semibold hover:underline flex items-center"
+                        >
+                          <Plus className="w-3.5 h-3.5 mr-1" /> Aggiungi Sede
+                        </button>
+                      </div>
 
-                  {/* Offerte & Trattative */}
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-slate-900 flex items-center">
-                        <Briefcase className="w-4 h-4 mr-2 text-blue-600" /> Offerte & Preventivi Proposti
-                      </h3>
-                      <button
-                        onClick={() => setMostraModaleOfferta(true)}
-                        className="text-xs text
+                      <div className="space-y-3">
+                        {soggettoAttivo.indirizzi && soggettoAttivo.indirizzi.length > 0 ? (
+                          soggettoAttivo.indirizzi.map(ind => (
+                            <div key={ind.id} className="p-3 bg-slate-50 border rounded-xl flex items-center justify-between">
+                              <div className="flex-1 mr-4">
+                                <input
+                                  type="text"
+                                  defaultValue={ind.label}
+                                  onBlur={(e) => salvaLabelIndirizzo(ind.id, e.target.value)}
+                                  className="text-xs font-bold text-blue-900 bg-transparent border-b border-dashed border-slate-400 focus:outline-none mb-1"
+                                />
+                                <div className="text-sm text-slate-700">{ind.via}</div>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-xs text-slate-400 italic">Nessun indirizzo presente.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Sezione Offerte del Soggetto */}
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm col-span-3">
+                      <div className="flex justify-between items-center mb-4">
